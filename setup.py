@@ -1,7 +1,18 @@
+import re
+from pathlib import Path
+
 from setuptools import setup, find_packages
 
+here = Path(__file__).parent
 
-version = '0.8.1'
+# Single source of truth: Products/ZSQLiteDA/__init__.py.__version__
+# (read as text -- importing the package would pull in Zope).
+version = re.search(
+    r"^__version__ = '([^']+)'",
+    here.joinpath('Products', 'ZSQLiteDA', '__init__.py').read_text(
+        encoding='utf-8'),
+    re.M,
+).group(1)
 
 setup(name='Products.ZSQLiteDA',
       version=version,
