@@ -286,7 +286,7 @@ def _ends_in_line_comment(s: str) -> bool:
         if j != i:
             i = j
             continue
-        if ch in ("'", '"'):
+        if ch in ("'", '"', '`'):
             q = ch
         elif ch == '[':
             q = ']'
@@ -308,6 +308,36 @@ def _skip_comment(s: str, i: int) -> int:
     return i
 
 
+def _open_paren(s: str) -> int:
+    """Index of the first ``(`` outside quotes and comments, or -1.
+
+    A parenthesis inside a quoted name, such as ``"t(x)"``, is not the
+    start of the column list."""
+    q, i = None, 0
+    while i < len(s):
+        ch = s[i]
+        if q:
+            if ch == q:
+                if q != ']' and i + 1 < len(s) and s[i + 1] == q:
+                    i += 2
+                    continue
+                q = None
+            i += 1
+            continue
+        j = _skip_comment(s, i)
+        if j != i:
+            i = j
+            continue
+        if ch in ("'", '"', '`'):
+            q = ch
+        elif ch == '[':
+            q = ']'
+        elif ch == '(':
+            return i
+        i += 1
+    return -1
+
+
 def _split_top_level(s: str) -> list:
     """Split a string on commas that sit outside any parentheses, quotes or
     comments."""
@@ -324,7 +354,7 @@ def _split_top_level(s: str) -> list:
         j = _skip_comment(s, i)
         if j != i:
             buf.append(s[i:j]); i = j; continue
-        if ch in ("'", '"'):
+        if ch in ("'", '"', '`'):
             q = ch; buf.append(ch)
         elif ch == '[':
             q = ']'; buf.append(ch)
@@ -352,7 +382,7 @@ def format_sql(sql: str) -> str:
     s = sql.strip()
     if not s.upper().startswith('CREATE TABLE'):
         return s
-    open_idx = s.find('(')
+    open_idx = _open_paren(s)
     if open_idx == -1:
         return s
     header = s[:open_idx].rstrip()
@@ -372,7 +402,7 @@ def format_sql(sql: str) -> str:
         j = _skip_comment(s, i)
         if j != i:
             i = j; continue
-        if ch in ("'", '"'):
+        if ch in ("'", '"', '`'):
             q = ch
         elif ch == '[':
             q = ']'
@@ -424,12 +454,12 @@ class DB(Shared.DC.ZRDB.THUNK.THUNKED_TM):
         self.open()
 
     def query(self, query_string, max_rows=None):
-        self._begin()
-        c = self.db.cursor()
-
         queries = [q.strip() for q in query_string.split('\0') if q.strip()]
         if not queries:
             raise sqlite3.OperationalError('empty query')
+
+        self._begin()
+        c = self.db.cursor()
         desc = None
         result = []
         try:
@@ -491,8 +521,13 @@ class DB(Shared.DC.ZRDB.THUNK.THUNKED_TM):
         return items, result
 
     def _begin(self) -> None:
-        # sqlite3.connection don't have begein() method.
-        pass
+        # sqlite3 opens an implicit transaction only for INSERT, UPDATE,
+        # DELETE and REPLACE. A CREATE before that is committed on its own,
+        # so the rollback in query() would leave the new table behind.
+        # An explicit transaction puts the whole batch, including DDL, in
+        # one unit. Skip when a transaction is already open.
+        if not self.db.in_transaction:
+            self.db.execute('BEGIN')
 
     def _finish(self) -> None:
         self.db.commit()

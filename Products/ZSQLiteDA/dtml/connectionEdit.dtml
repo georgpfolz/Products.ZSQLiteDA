@@ -50,6 +50,7 @@
         <div class="zsql-select-mode">
           <div class="input-group">
             <select class="form-control zsql-existing" name="connection_string" size="1">
+              <option value=""<dtml-if "not connection_string"> selected</dtml-if>></option>
               <dtml-in "zsql_databases()">
                 <option value="<dtml-var sequence-item html_quote>"<dtml-if
                  "_['sequence-item']==connection_string"> selected</dtml-if>><dtml-var
@@ -138,25 +139,36 @@
     else hint.textContent = 'New databases cannot be created in this directory; choose an existing one.';
   }
 
+  var lookup = 0;
+
   function refreshList(dir) {
     // build the URL without any credentials the page may carry in its address
     // (fetch refuses a URL that embeds user:pass@)
     var url = new URL('manage_listDataSources', window.location.href);
+    var ticket = ++lookup;
     url.username = '';
     url.password = '';
     url.search = 'data_dir=' + encodeURIComponent(dir);
     fetch(url.href, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
       .then(function (r) { return r.json(); })
       .then(function (d) {
+        // A slower answer for an earlier directory must not replace the list
+        // the selector is showing now.
+        if (ticket !== lookup || (dirInput && dirInput.value !== dir)) return;
         if (existing) {
           var cur = existing.value;
+          var matched = false;
           existing.innerHTML = '';
+          var blank = document.createElement('option');
+          blank.value = '';
+          existing.appendChild(blank);
           d.databases.forEach(function (name) {
             var o = document.createElement('option');
             o.value = name; o.textContent = name;
-            if (name === cur) o.selected = true;
+            if (name && name === cur) { o.selected = true; matched = true; }
             existing.appendChild(o);
           });
+          if (!matched) blank.selected = true;
         }
         if (newBtn) newBtn.style.display = d.can_create ? '' : 'none';
         showSelect();          // a directory change resets to "use existing"

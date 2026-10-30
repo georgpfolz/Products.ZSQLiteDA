@@ -11,13 +11,12 @@
 #
 ##############################################################################
 import os
-import html
 import json
 import logging
+from urllib.parse import urlencode
 from AccessControl.Permissions import change_database_connections, \
     open_close_database_connection, view_management_screens
 from AccessControl.SecurityInfo import ClassSecurityInfo
-from App.Dialogs import MessageDialog
 import Shared.DC.ZRDB.Connection
 from App.special_dtml import HTMLFile
 from sqlite3 import OperationalError as sqlite3_OperationalError
@@ -43,14 +42,28 @@ def extract_error(e):
         return str(e)
 
 
-def manage_addZSQLiteConnectionForm(self, REQUEST, *args, **kw) -> HTMLFile:
-    """Add a connection form"""
-
+def _add_form(self, REQUEST, message=''):
+    """The Add form. ``message`` is a bootstrap alert above the fields."""
+    data_dir = DEFAULT_DATA_DIR
+    if REQUEST is not None and REQUEST.get('data_dir'):
+        data_dir = REQUEST['data_dir']
+    try:
+        sources = data_sources(data_dir=data_dir)
+    except sqlite3_OperationalError:
+        data_dir = DEFAULT_DATA_DIR
+        sources = data_sources(data_dir=data_dir)
     return addConnectionForm(
         self, self, REQUEST,
         database_type=database_type,
-        data_dir=DEFAULT_DATA_DIR,
-        data_sources=data_sources(data_dir=DEFAULT_DATA_DIR))
+        data_dir=data_dir,
+        data_sources=sources,
+        manage_tabs_message=message)
+
+
+def manage_addZSQLiteConnectionForm(self, REQUEST, *args, **kw) -> HTMLFile:
+    """Add a connection form"""
+
+    return _add_form(self, REQUEST)
 
 
 def manage_addZSQLiteConnection(self, id: str, title: str,
@@ -62,11 +75,11 @@ def manage_addZSQLiteConnection(self, id: str, title: str,
     """Add a DB connection to a folder"""
 
     if not id:
-        return MessageDialog(
-            title='Invalid id',
-            message='Please provide an id for the database adapter!',
-            action='javascript:history.back()'
-        )
+        if REQUEST is None:
+            raise sqlite3_OperationalError(
+                'Please provide an id for the database adapter!')
+        return _add_form(
+            self, REQUEST, 'Please provide an id for the database adapter!')
 
     # Existing vs. create-new is driven by the mode radio, with a fallback to
     # whichever field carries a value so a scripted or JS-less POST still does
@@ -81,6 +94,10 @@ def manage_addZSQLiteConnection(self, id: str, title: str,
 
     try:
         safe_db_name(connection)
+        if creating and connection and os.path.exists(db_path):
+            raise sqlite3_OperationalError(
+                f'The database file “{connection}” already exists\n'
+                f'in {data_dir}!')
         if connection and not creating and not os.path.exists(db_path):
             # 'use existing' must not silently fall through to creating a file
             raise sqlite3_OperationalError(
@@ -88,14 +105,11 @@ def manage_addZSQLiteConnection(self, id: str, title: str,
                 'Select an existing database or create a new one.')
         check_database(dbpath=db_path)
     except sqlite3_OperationalError as e:
-        return MessageDialog(
-            title='Invalid database',
-            # MessageDialog renders its message as raw HTML, so escape the
-            # request-controlled text (data_dir, name) before turning newlines
-            # into <br> — otherwise a crafted directory value is reflected XSS.
-            message=html.escape(extract_error(e)).replace('\n', '<br>'),
-            action='javascript:history.back()'
-        )
+        if REQUEST is None:
+            raise
+        # Stay on the Add form. MessageDialog is the old full-page dialog and
+        # would leave the ZMI layout.
+        return _add_form(self, REQUEST, extract_error(e))
     # Note - ZSQLiteDA's connect immediately check is alway false
     self._setObject(id, Connection(
         id, title, connection, REQUEST=REQUEST, data_dir=data_dir))
@@ -158,10 +172,7 @@ class Connection(Shared.DC.ZRDB.Connection.Connection):
             # dereferences REQUEST).
             if REQUEST is None:
                 raise sqlite3_OperationalError(message)
-            return self.manage_properties(
-                self, REQUEST,
-                manage_tabs_message=message,
-                manage_tabs_type='danger')
+            return self._properties_message(REQUEST, message, 'danger')
 
         for name in (new_database, connection_string):
             try:
@@ -186,9 +197,8 @@ class Connection(Shared.DC.ZRDB.Connection.Connection):
                     '<product-config Products.ZSQLiteDA> section of zope.conf.')
             self.edit(title, self.connection_string, None)
             if REQUEST is not None:
-                return self.manage_properties(
-                    self, REQUEST,
-                    manage_tabs_message=f'“{self.id}” has been edited.')
+                return self._properties_message(
+                    REQUEST, f'“{self.id}” has been edited.')
             return
 
         if not os.path.exists(data_dir):
@@ -245,9 +255,22 @@ class Connection(Shared.DC.ZRDB.Connection.Connection):
                   1 if (connect_now and connection_string) else None)
 
         if REQUEST is not None:
-            return self.manage_properties(
-                self, REQUEST,
-                manage_tabs_message=f'“{self.id}” has been edited.')
+            return self._properties_message(
+                REQUEST, f'“{self.id}” has been edited.')
+
+    def _properties_message(self, REQUEST, message, message_type='success'):
+        """Redirect to Properties so the tab matches the page.
+
+        Rendering the template directly leaves the browser on ``manage_edit``.
+        That address matches no tab, so the first tab (Status) is highlighted
+        while the Properties form is still on screen.
+        """
+        query = urlencode({
+            'manage_tabs_message': message,
+            'manage_tabs_type': message_type,
+        })
+        return REQUEST.RESPONSE.redirect(
+            f'{self.absolute_url()}/manage_properties?{query}')
 
     def connected(self) -> str:
         if hasattr(self, '_v_database_connection'):

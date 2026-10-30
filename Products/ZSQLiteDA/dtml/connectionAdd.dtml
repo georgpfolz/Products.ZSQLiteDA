@@ -5,20 +5,28 @@
            )">
 
 <main class="container-fluid">
-<dtml-let data_sources="list(data_sources)">
+<dtml-if manage_tabs_message>
+  <div class="alert alert-danger" role="alert">
+    <dtml-var manage_tabs_message newline_to_br html_quote>
+  </div>
+</dtml-if>
+<dtml-let data_sources="list(data_sources)"
+          use_new="REQUEST.form.get('mode')=='new' or (not data_sources and REQUEST.form.get('mode')!='existing')">
   <form action="manage_addZ<dtml-var database_type>Connection" method="post">
 
     <div class="form-group row">
       <label for="zsql-id" class="col-sm-3 col-form-label">Id</label>
       <div class="col-sm-9">
-        <input type="text" class="form-control" id="zsql-id" name="id" value="">
+        <input type="text" class="form-control" id="zsql-id" name="id"
+               value="<dtml-var "REQUEST.form.get('id', '')" html_quote>">
       </div>
     </div>
 
     <div class="form-group row">
       <label for="zsql-title" class="col-sm-3 col-form-label">Title</label>
       <div class="col-sm-9">
-        <input type="text" class="form-control" id="zsql-title" name="title" value="">
+        <input type="text" class="form-control" id="zsql-title" name="title"
+               value="<dtml-var "REQUEST.form.get('title', '')" html_quote>">
       </div>
     </div>
 
@@ -41,25 +49,29 @@
         <div class="form-check">
           <input class="form-check-input zsql-mode" type="radio" name="mode"
                  id="zsql-mode-existing" value="existing"
-                 <dtml-if data_sources>checked<dtml-else>disabled</dtml-if>>
+                 <dtml-unless use_new>checked</dtml-unless>
+                 <dtml-unless data_sources>disabled</dtml-unless>>
           <label class="form-check-label" for="zsql-mode-existing">Use existing database</label>
         </div>
         <select class="form-control zsql-existing mb-3" name="connection" size="1"
                 <dtml-unless data_sources>disabled</dtml-unless>>
           <dtml-in data_sources>
-            <option value="<dtml-var sequence-key html_quote>"><dtml-var sequence-key html_quote></option>
+            <option value="<dtml-var sequence-key html_quote>"
+                    <dtml-if "_['sequence-key']==REQUEST.form.get('connection')"> selected</dtml-if>
+                    ><dtml-var sequence-key html_quote></option>
           </dtml-in>
         </select>
 
         <div class="form-check">
           <input class="form-check-input zsql-mode" type="radio" name="mode"
                  id="zsql-mode-new" value="new"
-                 <dtml-unless data_sources>checked</dtml-unless>>
+                 <dtml-if use_new>checked</dtml-if>>
           <label class="form-check-label" for="zsql-mode-new">Create new database</label>
         </div>
         <input type="text" class="form-control zsql-new" name="new_database"
                placeholder="my-database.db"
-               <dtml-if data_sources>disabled</dtml-if>>
+               value="<dtml-var "REQUEST.form.get('new_database', '')" html_quote>"
+               <dtml-unless use_new>disabled</dtml-unless>>
         <small class="form-text text-muted">A new empty database file is created in
         the data directory.</small>
 
